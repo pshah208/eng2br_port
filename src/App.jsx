@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { GameProvider } from './context/GameContext.jsx';
+import { AuthProvider } from './context/AuthContext.jsx';
 import Dashboard from './components/Dashboard.jsx';
 import LessonScreen from './components/LessonScreen.jsx';
 import ResultScreen from './components/ResultScreen.jsx';
@@ -38,26 +39,28 @@ export default function App() {
   };
 
   return (
-    <GameProvider>
-      {screen === 'dashboard' && (
-        <Dashboard onStartLesson={handleStartLesson} />
-      )}
-      {screen === 'lesson' && activeLesson && (
-        <LessonScreen
-          unit={activeUnit}
-          lesson={activeLesson}
-          onComplete={handleLessonComplete}
-          onQuit={handleContinue}
-        />
-      )}
-      {screen === 'result' && lessonResult && (
-        <ResultScreen
-          result={lessonResult}
-          lesson={activeLesson}
-          onContinue={handleContinue}
-          onRetry={handleRetry}
-        />
-      )}
-    </GameProvider>
+    <AuthProvider>
+      <GameProvider>
+        {screen === 'dashboard' && (
+          <Dashboard onStartLesson={handleStartLesson} />
+        )}
+        {screen === 'lesson' && activeLesson && (
+          <LessonScreen
+            unit={activeUnit}
+            lesson={activeLesson}
+            onComplete={handleLessonComplete}
+            onQuit={handleContinue}
+          />
+        )}
+        {screen === 'result' && lessonResult && (
+          <ResultScreen
+            result={lessonResult}
+            lesson={activeLesson}
+            onContinue={handleContinue}
+            onRetry={handleRetry}
+          />
+        )}
+      </GameProvider>
+    </AuthProvider>
   );
 }

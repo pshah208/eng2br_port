@@ -1,14 +1,22 @@
 import { useState } from 'react';
 import { useGame } from '../context/GameContext.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 import UnitCard from './UnitCard.jsx';
 import Leaderboard from './Leaderboard.jsx';
 import curriculum from '../data/curriculum.js';
 
 export default function Dashboard({ onStartLesson }) {
-  const { state, dispatch } = useGame();
+  const { state, resetProgress } = useGame();
+  const { isAuthenticated, inProgress, login, logout, displayName } = useAuth();
   const [showLeaderboard, setShowLeaderboard] = useState(false);
 
   const totalLessons = curriculum.reduce((s, u) => s + u.lessons.length, 0);
+
+  const handleReset = () => {
+    if (confirm('Reset all progress? This cannot be undone.')) {
+      resetProgress();
+    }
+  };
 
   return (
     <div className="dashboard">
@@ -49,14 +57,35 @@ export default function Dashboard({ onStartLesson }) {
           </button>
           <button
             className="btn-outline"
-            onClick={() => {
-              if (confirm('Reset all progress? This cannot be undone.')) {
-                dispatch({ type: 'RESET_PROGRESS' });
-              }
-            }}
+            onClick={handleReset}
           >
             🔄 Reset
           </button>
+
+          {/* Auth controls */}
+          {!isAuthenticated ? (
+            <button
+              className="btn-auth btn-auth--login"
+              onClick={login}
+              disabled={inProgress}
+              title="Sign in to sync progress across devices"
+            >
+              🔑 Sign In
+            </button>
+          ) : (
+            <div className="auth-user">
+              <span className="auth-user-name" title="Signed in – progress syncs to cloud">
+                ☁️ {displayName}
+              </span>
+              <button
+                className="btn-auth btn-auth--logout"
+                onClick={logout}
+                disabled={inProgress}
+              >
+                Sign Out
+              </button>
+            </div>
+          )}
         </div>
       </header>
 

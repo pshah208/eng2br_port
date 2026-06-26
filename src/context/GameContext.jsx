@@ -1,5 +1,9 @@
-import { createContext, useContext, useReducer, useEffect } from 'react';
+/* eslint-disable react-refresh/only-export-components */
+import { createContext, useContext, useReducer, useEffect, useRef, useCallback } from 'react';
 import curriculum from '../data/curriculum.js';
+import { useAuth } from './AuthContext.jsx';
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL || '';
 
 // ─── Initial State ─────────────────────────────────────────────────────────────
 const getInitialState = () => {
@@ -91,8 +95,46 @@ function gameReducer(state, action) {
         leaderboard: state.leaderboard, // keep leaderboard
       };
 
+    case 'HYDRATE_FROM_CLOUD': {
+      const p = action.payload;
+      return {
+        ...state,
+        xp: p.xp ?? state.xp,
+        streak: p.streak ?? state.streak,
+        lastPlayDate: p.lastPlayDate ?? state.lastPlayDate,
+        hearts: p.hearts ?? state.hearts,
+        completedLessons: p.completedLessons ?? state.completedLessons,
+        completedUnits: p.completedUnits ?? state.completedUnits,
+        badges: p.badges ?? state.badges,
+        leaderboard: state.leaderboard.map((entry) =>
+          entry.isYou ? { ...entry, xp: p.xp ?? state.xp } : entry
+        ),
+      };
+    }
+
     default:
       return state;
+  }
+}
+
+// ─── Cloud API helpers ─────────────────────────────────────────────────────────
+
+async function apiFetch(path, token, options = {}) {
+  if (!API_BASE || !token) return null;
+  try {
+    const authHeader = ['Bearer', token].join(' ');
+    const res = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: authHeader,
+        ...(options.headers || {}),
+      },
+    });
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
   }
 }
 
@@ -101,6 +143,10 @@ const GameContext = createContext(null);
 
 export function GameProvider({ children }) {
   const [state, dispatch] = useReducer(gameReducer, undefined, getInitialState);
+  const { isAuthenticated, getAccessToken } = useAuth();
+
+  // Track previous auth state to detect login events
+  const prevAuthRef = useRef(isAuthenticated);
 
   // Persist to localStorage whenever state changes
   useEffect(() => {
@@ -112,8 +158,67 @@ export function GameProvider({ children }) {
     dispatch({ type: 'UPDATE_STREAK' });
   }, []);
 
+  // On login: fetch cloud progress and hydrate local state
+  useEffect(() => {
+    if (!isAuthenticated || prevAuthRef.current === isAuthenticated) return;
+    prevAuthRef.current = isAuthenticated;
+
+    (async () => {
+      const token = await getAccessToken();
+      if (!token) return;
+      const data = await apiFetch('/me', token);
+      if (data?.progress) {
+        dispatch({ type: 'HYDRATE_FROM_CLOUD', payload: data.progress });
+      }
+    })();
+  }, [isAuthenticated, getAccessToken]);
+
+  // Update prevAuthRef when auth changes (including initial render)
+  useEffect(() => {
+    prevAuthRef.current = isAuthenticated;
+  });
+
+  // Debounced cloud sync on state changes
+  const syncTimerRef = useRef(null);
+  useEffect(() => {
+    if (!isAuthenticated || !API_BASE) return;
+
+    if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(async () => {
+      const token = await getAccessToken();
+      if (!token) return;
+      await apiFetch('/me/progress', token, {
+        method: 'PUT',
+        body: JSON.stringify({
+          xp: state.xp,
+          streak: state.streak,
+          lastPlayDate: state.lastPlayDate,
+          hearts: state.hearts,
+          completedLessons: state.completedLessons,
+          completedUnits: state.completedUnits,
+          badges: state.badges,
+        }),
+      });
+    }, 1500);
+
+    return () => {
+      if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+    };
+  }, [state, isAuthenticated, getAccessToken]);
+
+  // Cloud-aware reset: also hits /me/reset endpoint when authenticated
+  const resetProgress = useCallback(async () => {
+    dispatch({ type: 'RESET_PROGRESS' });
+    if (isAuthenticated && API_BASE) {
+      const token = await getAccessToken();
+      if (token) {
+        await apiFetch('/me/reset', token, { method: 'POST' });
+      }
+    }
+  }, [isAuthenticated, getAccessToken]);
+
   return (
-    <GameContext.Provider value={{ state, dispatch }}>
+    <GameContext.Provider value={{ state, dispatch, resetProgress }}>
       {children}
     </GameContext.Provider>
   );
