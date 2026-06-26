@@ -9,7 +9,7 @@ export default function UnitCard({ unit, onSelectLesson }) {
   ).length;
 
   const isUnitComplete = state.completedUnits.includes(unit.id);
-  const isLocked = false; // all units unlocked; optionally lock by prior completion
+  // all units unlocked; optionally lock by prior unit completion
 
   return (
     <div

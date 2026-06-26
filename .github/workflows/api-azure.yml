@@ -1,0 +1,59 @@
+# ─── API Azure Web App Deployment ─────────────────────────────────────────────
+#
+# Required secrets (GitHub → Settings → Secrets and variables):
+#
+#   AZURE_WEBAPP_PUBLISH_PROFILE_API
+#     Download from Azure Portal → App Service (api) → Overview → "Get publish profile"
+#
+# Required variables (GitHub → Settings → Variables):
+#   AZURE_WEBAPP_NAME_API  – e.g. eng2br-api
+#
+# App Service Application Settings (configure in Azure Portal or via az cli):
+#   ENTRA_JWKS_URI          – https://<tenant>.ciamlogin.com/<tenant>.onmicrosoft.com/discovery/v2.0/keys
+#   ENTRA_ISSUER            – https://<tenant>.ciamlogin.com/<tenant>.onmicrosoft.com/v2.0
+#   ENTRA_CLIENT_ID         – API app registration client ID
+#   COSMOS_ENDPOINT         – https://<account>.documents.azure.com:443/
+#   COSMOS_KEY              – Primary key from Azure Portal (or use Managed Identity)
+#   COSMOS_DB_NAME          – eng2br
+#   COSMOS_CONTAINER_NAME   – user_progress
+#   CORS_ORIGIN             – https://<frontend>.azurewebsites.net
+#   NODE_ENV                – production
+#   PORT                    – 8080  (Azure App Service uses port 8080 by default)
+
+name: Deploy API to Azure Web App
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'api/**'
+      - '.github/workflows/api-azure.yml'
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: api/package-lock.json
+
+      - name: Install API dependencies
+        run: npm ci
+        working-directory: api
+
+      - name: Deploy to Azure Web App
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: ${{ vars.AZURE_WEBAPP_NAME_API }}
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE_API }}
+          package: ./api

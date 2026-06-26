@@ -85,11 +85,43 @@ Each lesson rotates through all exercise types:
 | **React 18** | UI framework |
 | **Vite 4** | Development server and build tool |
 | **React Context + useReducer** | Global state management |
-| **localStorage** | Persistence for XP, streak, progress, completed lessons |
+| **@azure/msal-browser + msal-react** | Microsoft Entra External ID authentication |
+| **localStorage** | Offline/local persistence fallback |
 | **Pure CSS** | Styling (no external UI library – DuoLingo-inspired design) |
-| **Vanilla JS** | All curriculum content in `src/data/curriculum.js` |
+| **Node.js 20 + Express** | Backend API (`/api`) |
+| **Azure Cosmos DB (NoSQL)** | Per-user progress storage |
+| **Microsoft Entra External ID** | Managed user registration & sign-in |
 
-No backend required – fully static, runs in the browser.
+---
+
+## 🏗 Architecture
+
+```
+┌───────────────────────┐       ┌──────────────────────────┐
+│   React Frontend      │──────▶│  Node/Express API (/api) │
+│   (Azure App Service) │  JWT  │  (Azure App Service)     │
+│                       │◀──────│                          │
+│  • MSAL login/logout  │       │  • Entra JWT validation  │
+│  • localStorage cache │       │  • Cosmos DB upsert/read │
+│  • cloud sync on save │       │  • GET /api/v1/me        │
+└───────────────────────┘       │  • PUT /api/v1/me/progress│
+           │                    │  • POST /api/v1/me/reset  │
+           │                    └──────────┬───────────────┘
+           ▼                               │
+┌──────────────────────┐        ┌──────────▼───────────────┐
+│  Microsoft Entra     │        │  Azure Cosmos DB (NoSQL)  │
+│  External ID         │        │  Container: user_progress │
+│  (Managed Auth)      │        │  Partition key: /userId   │
+└──────────────────────┘        └──────────────────────────┘
+```
+
+**Auth flow:**
+1. User clicks **Sign In** → MSAL popup login via Entra External ID
+2. On success, access token is acquired silently for the API scope
+3. `GET /api/v1/me` is called; cloud progress hydrates the app state
+4. On each state change (XP, streak, lesson complete, etc.), progress is debounced (1.5s) and sent to `PUT /api/v1/me/progress`
+5. **Reset** calls `POST /api/v1/me/reset` to also clear cloud progress
+6. Unauthenticated users continue using localStorage only (no sync)
 
 ---
 
@@ -97,35 +129,249 @@ No backend required – fully static, runs in the browser.
 
 ```
 eng2br_port/
+├── .env.example                # Frontend env vars (Vite)
+├── .github/workflows/
+│   ├── frontend-azure.yml      # Deploy frontend to Azure Web App
+│   └── api-azure.yml           # Deploy API to Azure Web App
 ├── index.html
 ├── package.json
 ├── vite.config.js
 ├── README.md
+├── api/                        # Node/Express backend
+│   ├── .env.example
+│   ├── package.json
+│   ├── server.js
+│   ├── README.md
+│   └── src/
+│       ├── middleware/
+│       │   └── auth.js         # Entra JWT validation middleware
+│       ├── routes/
+│       │   ├── health.js       # GET /api/v1/health
+│       │   └── me.js           # GET/PUT/POST /api/v1/me
+│       ├── cosmos/
+│       │   └── client.js       # Cosmos DB connection
+│       └── services/
+│           └── progressService.js  # CRUD operations
 └── src/
-    ├── main.jsx                    # React entry point
-    ├── App.jsx                     # Root component & screen router
-    ├── App.css                     # Global styles
-    ├── data/
-    │   └── curriculum.js           # All 25 lessons with exercises
+    ├── auth/
+    │   └── msalConfig.js       # MSAL instance + scopes
     ├── context/
-    │   └── GameContext.jsx         # XP, streak, hearts, progress state
+    │   ├── AuthContext.jsx     # Auth state (login/logout/token)
+    │   └── GameContext.jsx     # Game state + cloud sync
+    ├── main.jsx                # React entry + MsalProvider
+    ├── App.jsx                 # Root component & screen router
+    ├── App.css                 # Global styles
+    ├── data/
+    │   └── curriculum.js       # All 25 lessons with exercises
     └── components/
-        ├── Dashboard.jsx           # Home screen with all units
-        ├── UnitCard.jsx            # Individual unit display
-        ├── LessonScreen.jsx        # Active lesson with exercise renderer
-        ├── ResultScreen.jsx        # Lesson complete screen
-        ├── ProgressBar.jsx         # Reusable progress bar
-        ├── Hearts.jsx              # Heart/lives display
-        ├── Leaderboard.jsx         # Leaderboard modal
+        ├── Dashboard.jsx       # Home screen (with login/logout)
+        ├── UnitCard.jsx
+        ├── LessonScreen.jsx
+        ├── ResultScreen.jsx
+        ├── ProgressBar.jsx
+        ├── Hearts.jsx
+        ├── Leaderboard.jsx
         └── exercises/
-            ├── MultipleChoice.jsx  # Multiple choice questions
-            ├── TranslationInput.jsx # Free-text translation
-            ├── WordBank.jsx        # Tap to build sentences
-            ├── MatchingPairs.jsx   # Match English ↔ Portuguese
-            ├── FillBlank.jsx       # Fill in the blank
-            ├── Flashcard.jsx       # Flip card review
-            └── MiniQuiz.jsx        # 5-question end-of-lesson quiz
+            ├── MultipleChoice.jsx
+            ├── TranslationInput.jsx
+            ├── WordBank.jsx
+            ├── MatchingPairs.jsx
+            ├── FillBlank.jsx
+            ├── Flashcard.jsx
+            └── MiniQuiz.jsx
 ```
+
+---
+
+## 🚀 Local Development
+
+### Frontend only (no auth/sync)
+
+```bash
+npm install
+npm run dev
+# → http://localhost:5173  (localStorage only, no sign-in required)
+```
+
+### Frontend + API with cloud sync
+
+**1. Set up environment variables:**
+
+```bash
+# Frontend
+cp .env.example .env
+# Fill in VITE_ENTRA_* and VITE_API_BASE_URL
+
+# API
+cp api/.env.example api/.env
+# Fill in ENTRA_*, COSMOS_* values
+```
+
+**2. Start the API:**
+
+```bash
+cd api
+npm install
+npm run dev
+# → http://localhost:3001
+```
+
+**3. Start the frontend:**
+
+```bash
+# (back in repo root)
+npm run dev
+# → http://localhost:5173
+```
+
+---
+
+## ☁️ Azure Setup (Step-by-Step)
+
+### 1. Create Azure resources
+
+```bash
+# Resource group
+az group create --name rg-eng2br-prod --location eastus
+
+# App Service Plan (Linux, B1)
+az appservice plan create \
+  --name asp-eng2br \
+  --resource-group rg-eng2br-prod \
+  --sku B1 --is-linux
+
+# Frontend Web App (Node runtime for static file serving)
+az webapp create \
+  --name eng2br-frontend \
+  --resource-group rg-eng2br-prod \
+  --plan asp-eng2br \
+  --runtime "NODE:20-lts"
+
+# API Web App
+az webapp create \
+  --name eng2br-api \
+  --resource-group rg-eng2br-prod \
+  --plan asp-eng2br \
+  --runtime "NODE:20-lts"
+
+# Cosmos DB account (NoSQL/Core API)
+az cosmosdb create \
+  --name cosmos-eng2br \
+  --resource-group rg-eng2br-prod \
+  --kind GlobalDocumentDB
+
+# Database and container
+az cosmosdb sql database create \
+  --account-name cosmos-eng2br \
+  --resource-group rg-eng2br-prod \
+  --name eng2br
+
+az cosmosdb sql container create \
+  --account-name cosmos-eng2br \
+  --resource-group rg-eng2br-prod \
+  --database-name eng2br \
+  --name user_progress \
+  --partition-key-path "/userId" \
+  --throughput 400
+```
+
+### 2. Create Entra External ID app registrations
+
+You need **two app registrations** – one for the frontend and one for the API.
+
+#### 2a. API app registration
+
+1. Azure Portal → **Microsoft Entra ID** → **App registrations** → **New registration**
+2. Name: `eng2br-api`; Supported account types: **Accounts in this organizational directory only**
+3. After creation, note the **Application (client) ID** → this is `ENTRA_CLIENT_ID` for the API
+4. Go to **Expose an API** → **Add a scope**:
+   - Application ID URI: `api://<eng2br-api-client-id>`
+   - Scope name: `user_impersonation`
+   - Admin consent display name: `Access Aprenda Português API`
+5. Note the full scope: `api://<eng2br-api-client-id>/user_impersonation` → `VITE_ENTRA_API_SCOPE`
+
+#### 2b. Frontend app registration (Entra External ID / CIAM)
+
+1. In your **External ID tenant**: **App registrations** → **New registration**
+2. Name: `eng2br-frontend`
+3. Redirect URIs → **Single-page application (SPA)**:
+   - `http://localhost:5173` (dev)
+   - `https://eng2br-frontend.azurewebsites.net` (prod)
+4. Under **API permissions** → **Add a permission** → **My APIs** → `eng2br-api` → `user_impersonation`
+5. Note the **Application (client) ID** → `VITE_ENTRA_CLIENT_ID`
+6. The authority is your **External ID tenant domain**:
+   - `https://<tenant>.ciamlogin.com/<tenant>.onmicrosoft.com`
+
+#### 2c. JWKS / issuer values for the API
+
+- `ENTRA_JWKS_URI` = `https://<tenant>.ciamlogin.com/<tenant>.onmicrosoft.com/discovery/v2.0/keys`
+- `ENTRA_ISSUER` = `https://<tenant>.ciamlogin.com/<tenant>.onmicrosoft.com/v2.0`
+
+### 3. Configure API App Service settings
+
+```bash
+# Get Cosmos DB primary key
+COSMOS_KEY=$(az cosmosdb keys list \
+  --name cosmos-eng2br \
+  --resource-group rg-eng2br-prod \
+  --query primaryMasterKey -o tsv)
+
+COSMOS_ENDPOINT=$(az cosmosdb show \
+  --name cosmos-eng2br \
+  --resource-group rg-eng2br-prod \
+  --query documentEndpoint -o tsv)
+
+az webapp config appsettings set \
+  --name eng2br-api \
+  --resource-group rg-eng2br-prod \
+  --settings \
+    ENTRA_JWKS_URI="https://<tenant>.ciamlogin.com/<tenant>.onmicrosoft.com/discovery/v2.0/keys" \
+    ENTRA_ISSUER="https://<tenant>.ciamlogin.com/<tenant>.onmicrosoft.com/v2.0" \
+    ENTRA_CLIENT_ID="<api-client-id>" \
+    COSMOS_ENDPOINT="$COSMOS_ENDPOINT" \
+    COSMOS_KEY="$COSMOS_KEY" \
+    COSMOS_DB_NAME="eng2br" \
+    COSMOS_CONTAINER_NAME="user_progress" \
+    CORS_ORIGIN="https://eng2br-frontend.azurewebsites.net" \
+    NODE_ENV="production" \
+    PORT="8080"
+```
+
+### 4. Configure CORS on the API App Service
+
+```bash
+az webapp cors add \
+  --name eng2br-api \
+  --resource-group rg-eng2br-prod \
+  --allowed-origins "https://eng2br-frontend.azurewebsites.net"
+```
+
+### 5. Configure GitHub Actions secrets & variables
+
+In your GitHub repository → **Settings** → **Secrets and variables** → **Actions**:
+
+**Secrets:**
+- `AZURE_WEBAPP_PUBLISH_PROFILE_FRONTEND` – publish profile XML from frontend App Service
+- `AZURE_WEBAPP_PUBLISH_PROFILE_API` – publish profile XML from API App Service
+
+**Variables:**
+- `AZURE_WEBAPP_NAME_FRONTEND` = `eng2br-frontend`
+- `AZURE_WEBAPP_NAME_API` = `eng2br-api`
+- `VITE_ENTRA_AUTHORITY` = `https://<tenant>.ciamlogin.com/<tenant>.onmicrosoft.com`
+- `VITE_ENTRA_CLIENT_ID` = `<frontend-client-id>`
+- `VITE_ENTRA_REDIRECT_URI` = `https://eng2br-frontend.azurewebsites.net`
+- `VITE_ENTRA_API_SCOPE` = `api://<api-client-id>/user_impersonation`
+- `VITE_API_BASE_URL` = `https://eng2br-api.azurewebsites.net/api/v1`
+
+Push to `main` to trigger both deployment workflows.
+
+---
+
+## 🔄 Migration Note
+
+- **Existing users** (localStorage only): progress continues to work locally as before. No sign-in required.
+- **Authenticated users**: on first sign-in the cloud profile is fetched and hydrates the local state. All subsequent state changes are synced to the cloud (debounced 1.5 s).
+- Last-write-wins strategy: cloud is the source of truth after sign-in.
 
 ---
 
