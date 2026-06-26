@@ -38,7 +38,7 @@ function getSigningKey(header, callback) {
 }
 
 /**
- * Express middleware that validates an Entra External ID ******
+ * Express middleware that validates an Entra External ID access token (JWT).
  * On success, sets req.user = { userId, email, name }.
  * On failure, responds 401 Unauthorized.
  */

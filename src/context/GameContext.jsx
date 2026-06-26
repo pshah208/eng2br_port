@@ -158,10 +158,13 @@ export function GameProvider({ children }) {
     dispatch({ type: 'UPDATE_STREAK' });
   }, []);
 
-  // On login: fetch cloud progress and hydrate local state
+  // On login: fetch cloud progress and hydrate local state.
+  // prevAuthRef tracks the last-seen value so we only act on the false→true transition.
   useEffect(() => {
-    if (!isAuthenticated || prevAuthRef.current === isAuthenticated) return;
+    const wasAuthenticated = prevAuthRef.current;
     prevAuthRef.current = isAuthenticated;
+
+    if (!isAuthenticated || wasAuthenticated) return;
 
     (async () => {
       const token = await getAccessToken();
@@ -172,11 +175,6 @@ export function GameProvider({ children }) {
       }
     })();
   }, [isAuthenticated, getAccessToken]);
-
-  // Update prevAuthRef when auth changes (including initial render)
-  useEffect(() => {
-    prevAuthRef.current = isAuthenticated;
-  });
 
   // Debounced cloud sync on state changes
   const syncTimerRef = useRef(null);
